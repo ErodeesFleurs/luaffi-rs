@@ -1,6 +1,6 @@
-# LuaFFI
+# Luaffi-rs
 
-一个用 Rust 实现的 Lua FFI (Foreign Function Interface) 库，为 Lua 5.3 提供 C 语言类型系统和动态库加载功能。
+一个用 Rust 实现的 Lua FFI 库，为 Lua 5.3 提供 C 语言类型系统和动态库加载功能。
 
 ## 特性
 

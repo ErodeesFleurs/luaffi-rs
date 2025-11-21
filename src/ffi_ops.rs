@@ -50,24 +50,18 @@ pub fn new_cdata(lua: &Lua, type_name: &str, init: Option<LuaValue>) -> LuaResul
     // Handle VLA: extract size from init parameter
     let (actual_ctype, size, actual_init) = match &ctype {
         CType::VLA(elem_type) => {
-            // For VLA, init must be an integer specifying the array size
-            match init {
-                Some(LuaValue::Integer(count)) if count >= 0 => {
-                    let count = count as usize;
-                    let elem_size = elem_type.size();
-                    let total_size = elem_size * count;
-                    // Convert VLA to Array with actual size
-                    let array_type = CType::Array(elem_type.clone(), count);
-                    (array_type, total_size, None)
-                }
-                Some(LuaValue::Integer(_)) => {
+            // For VLA, init must be a number (integer or float) specifying the array size
+            let count = match init {
+                Some(LuaValue::Integer(i)) if i >= 0 => i as usize,
+                Some(LuaValue::Number(n)) if n >= 0.0 && n.is_finite() => n as usize,
+                Some(LuaValue::Integer(_)) | Some(LuaValue::Number(_)) => {
                     return Err(LuaError::RuntimeError(
                         "VLA size must be non-negative".to_string()
                     ));
                 }
                 Some(_) => {
                     return Err(LuaError::RuntimeError(
-                        "VLA requires an integer size as initialization parameter".to_string()
+                        "VLA requires a numeric size as initialization parameter".to_string()
                     ));
                 }
                 _ => {
@@ -75,7 +69,13 @@ pub fn new_cdata(lua: &Lua, type_name: &str, init: Option<LuaValue>) -> LuaResul
                         "VLA requires a size parameter: ffi.new('type[?]', size)".to_string()
                     ));
                 }
-            }
+            };
+            
+            let elem_size = elem_type.size();
+            let total_size = elem_size * count;
+            // Convert VLA to Array with actual size
+            let array_type = CType::Array(elem_type.clone(), count);
+            (array_type, total_size, None)
         }
         _ => {
             let size = ctype.size();

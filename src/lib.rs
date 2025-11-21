@@ -9,7 +9,7 @@ use mlua::prelude::*;
 const LUA_FFI_VERSION: &str = "0.1.1-rust";
 
 /// Create the FFI module with all exported functions
-fn lua_module(lua: &Lua) -> LuaResult<LuaTable> {
+pub fn lua_module(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
 
     exports.set("VERSION", LUA_FFI_VERSION)?;

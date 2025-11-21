@@ -1,36 +1,13 @@
 use mlua::prelude::*;
+use luaffi;
 
 // Helper function to create a Lua VM with the FFI module loaded
 fn create_lua_with_ffi() -> Lua {
     let lua = Lua::new();
     
-    // Load the FFI module
-    lua.load(r#"
-        -- Mock FFI module for testing
-        -- In real usage, this would be loaded as a C module
-        ffi = {}
-        ffi.VERSION = "0.1.0-rust"
-        
-        -- These will be properly implemented when the module is loaded
-        function ffi.cdef(code) end
-        function ffi.new(type_name, init) end
-        function ffi.cast(type_name, value) end
-        function ffi.typeof(type_name) return type_name end
-        function ffi.sizeof(type_name) return 4 end
-        function ffi.offsetof(type_name, field) return 0 end
-        function ffi.istype(type_name, value) return false end
-        function ffi.metatype(type_name, metatable) return nil end
-        function ffi.gc(cdata, finalizer) return cdata end
-        function ffi.addressof(cdata) return cdata end
-        function ffi.tonumber(cdata) return 0 end
-        function ffi.string(cdata) return "" end
-        function ffi.copy(dst, src, len) end
-        function ffi.fill(cdata, len, value) end
-        function ffi.errno(new_errno) return 0 end
-        
-        ffi.nullptr = nil
-        ffi.C = {}
-    "#).exec().unwrap();
+    // Load the real FFI module
+    let ffi_module = luaffi::lua_module(&lua).expect("Failed to create FFI module");
+    lua.globals().set("ffi", ffi_module).expect("Failed to set ffi global");
     
     lua
 }
@@ -41,7 +18,7 @@ fn test_ffi_module_loads() {
     
     // Check that FFI module exists
     let version: String = lua.load("return ffi.VERSION").eval().unwrap();
-    assert!(version.contains("0.1.0"));
+    assert!(version.contains("0.1"), "Version is: {}", version);
 }
 
 #[test]
@@ -140,9 +117,9 @@ fn test_ffi_copy() {
     
     // Test copy function exists and can be called
     let result = lua.load(r#"
-        -- Mock implementation for testing
+        local dst = ffi.new("char[10]")
         local src = "hello"
-        ffi.copy(nil, src)
+        ffi.copy(dst, src)
         return true
     "#).eval::<bool>();
     
@@ -155,7 +132,8 @@ fn test_ffi_fill() {
     
     // Test fill function exists and can be called
     let result = lua.load(r#"
-        ffi.fill(nil, 10, 0)
+        local buffer = ffi.new("char[10]")
+        ffi.fill(buffer, 10, 0)
         return true
     "#).eval::<bool>();
     
@@ -703,12 +681,15 @@ fn test_const_char_ptr_array() {
 fn test_char_ptr_array_vla() {
     let lua = create_lua_with_ffi();
     
-    // Test char*[?] without const (user's second issue)
-    let result = lua.load(r#"
-        return ffi.typeof("char*[?]")
-    "#).eval::<String>();
+    // Test char*[?] VLA instantiation
+    let result: Result<(), _> = lua.load(r#"
+        local ptr_array = ffi.new("char*[?]", 3)
+        assert(ptr_array ~= nil, "ffi.new returned nil")
+        -- Verify we can use the array
+        assert(ffi.sizeof(ffi.typeof("char*")) * 3 == 3 * ffi.sizeof("char*"))
+    "#).exec();
     
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "Failed to create char*[?] with ffi.new: {:?}", result.err());
 }
 
 #[test]
@@ -729,4 +710,24 @@ fn test_various_pointer_array_vla() {
             .eval::<String>();
         assert!(result.is_ok(), "Failed for pointer array VLA: {}", type_name);
     }
+}
+
+#[test]
+fn test_vla_with_float_size() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA accepts float parameters
+    let result = lua.load(r#"
+        -- Test with integer
+        local arr1 = ffi.new("int[?]", 5)
+        
+        -- Test with float (should work and truncate)
+        local arr2 = ffi.new("int[?]", 10.0)
+        local arr3 = ffi.new("int[?]", 7.9)  -- truncates to 7
+        
+        -- Test with pointer array
+        local arr4 = ffi.new("char*[?]", 16.0)
+    "#).exec();
+    
+    assert!(result.is_ok(), "Failed to create VLA with float size: {:?}", result.err());
 }

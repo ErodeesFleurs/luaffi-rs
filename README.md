@@ -209,7 +209,7 @@ cargo test --test functional_test
 
 ## 许可证
 
-[添加您的许可证信息]
+[MIT License]
 
 ## 贡献
 

@@ -23,7 +23,7 @@
 
 ```bash
 # 克隆仓库
-git clone <repository-url>
+git clone git@github.com:ErodeesFleurs/luaffi-rs.git
 cd luaffi
 
 # 构建项目

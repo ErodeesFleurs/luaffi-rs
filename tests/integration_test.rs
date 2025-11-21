@@ -616,3 +616,41 @@ fn test_constants_exist() {
     
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_vla_syntax() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA syntax with [?]
+    let result = lua.load(r#"
+        return ffi.typeof("int[?]")
+    "#).eval::<String>();
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_vla_with_pointer() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA with pointer type
+    let result = lua.load(r#"
+        return ffi.typeof("void*[?]")
+    "#).eval::<String>();
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_vla_different_types() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA with various base types
+    let types = vec!["char[?]", "int[?]", "float[?]", "double[?]", "void*[?]"];
+    
+    for type_name in types {
+        let result = lua.load(&format!("return ffi.typeof('{}')", type_name))
+            .eval::<String>();
+        assert!(result.is_ok(), "Failed for VLA type: {}", type_name);
+    }
+}

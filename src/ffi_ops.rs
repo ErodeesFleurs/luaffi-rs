@@ -46,12 +46,47 @@ fn lookup_registered_type(name: &str) -> Option<CType> {
 }
 pub fn new_cdata(lua: &Lua, type_name: &str, init: Option<LuaValue>) -> LuaResult<LuaAnyUserData> {
     let ctype = lookup_type(type_name)?;
-    let size = ctype.size();
+    
+    // Handle VLA: extract size from init parameter
+    let (actual_ctype, size, actual_init) = match &ctype {
+        CType::VLA(elem_type) => {
+            // For VLA, init must be an integer specifying the array size
+            match init {
+                Some(LuaValue::Integer(count)) if count >= 0 => {
+                    let count = count as usize;
+                    let elem_size = elem_type.size();
+                    let total_size = elem_size * count;
+                    // Convert VLA to Array with actual size
+                    let array_type = CType::Array(elem_type.clone(), count);
+                    (array_type, total_size, None)
+                }
+                Some(LuaValue::Integer(_)) => {
+                    return Err(LuaError::RuntimeError(
+                        "VLA size must be non-negative".to_string()
+                    ));
+                }
+                Some(_) => {
+                    return Err(LuaError::RuntimeError(
+                        "VLA requires an integer size as initialization parameter".to_string()
+                    ));
+                }
+                _ => {
+                    return Err(LuaError::RuntimeError(
+                        "VLA requires a size parameter: ffi.new('type[?]', size)".to_string()
+                    ));
+                }
+            }
+        }
+        _ => {
+            let size = ctype.size();
+            (ctype.clone(), size, init)
+        }
+    };
 
-    let mut cdata = CData::new(ctype.clone(), size);
+    let mut cdata = CData::new(actual_ctype, size);
 
     // Initialize the memory if init value is provided
-    if let Some(init_value) = init {
+    if let Some(init_value) = actual_init {
         initialize_cdata(&mut cdata, init_value)?;
     }
 
@@ -171,6 +206,13 @@ fn write_value_to_ptr(ptr: *mut u8, ctype: &CType, value: LuaValue) -> LuaResult
                         "Expected pointer value (integer, cdata, string, or nil)".to_string()
                     )),
                 }
+            }
+            
+            // VLA type - should not reach here as VLA is converted to Array in new_cdata
+            CType::VLA(_) => {
+                return Err(LuaError::RuntimeError(
+                    "VLA must be instantiated with a size before use".to_string()
+                ));
             }
             
             // Array type - initialize from table
@@ -435,7 +477,7 @@ pub fn cdata_to_string(cdata: LuaAnyUserData) -> LuaResult<String> {
     }
 
     match &cd.ctype {
-        CType::Ptr(inner) | CType::Array(inner, _) => match **inner {
+        CType::Ptr(inner) | CType::Array(inner, _) | CType::VLA(inner) => match **inner {
             CType::Char | CType::UChar => unsafe {
                 let c_str = CStr::from_ptr(cd.ptr as *const i8);
                 Ok(c_str.to_string_lossy().to_string())
@@ -523,6 +565,12 @@ pub fn lookup_type(type_name: &str) -> LuaResult<CType> {
         })?;
 
         let size_str = type_name[open_bracket + 1..close_bracket].trim();
+        
+        // Check for VLA syntax [?]
+        if size_str == "?" {
+            return Ok(CType::VLA(Box::new(inner)));
+        }
+        
         let size = if size_str.is_empty() {
             0 // Flexible array
         } else {

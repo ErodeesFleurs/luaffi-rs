@@ -389,4 +389,42 @@ mod ffi_functional_tests {
             assert!(t.alignment() > 0);
         }
     }
+
+    #[test]
+    fn test_vla_type_creation() {
+        // Test VLA type creation
+        let vla = CType::VLA(Box::new(CType::Int));
+        
+        // VLA size should be 0 at definition time (size unknown)
+        assert_eq!(vla.size(), 0);
+        
+        // VLA alignment should match element type
+        assert_eq!(vla.alignment(), CType::Int.alignment());
+    }
+
+    #[test]
+    fn test_vla_with_pointer() {
+        let ptr_type = CType::Ptr(Box::new(CType::Void));
+        let vla = CType::VLA(Box::new(ptr_type));
+        
+        assert_eq!(vla.size(), 0);
+        assert_eq!(vla.alignment(), std::mem::align_of::<*const ()>());
+    }
+
+    #[test]
+    fn test_vla_element_types() {
+        let types = vec![
+            CType::Char,
+            CType::Int,
+            CType::Float,
+            CType::Double,
+            CType::Ptr(Box::new(CType::Void)),
+        ];
+        
+        for elem_type in types {
+            let vla = CType::VLA(Box::new(elem_type.clone()));
+            assert_eq!(vla.size(), 0);
+            assert_eq!(vla.alignment(), elem_type.alignment());
+        }
+    }
 }

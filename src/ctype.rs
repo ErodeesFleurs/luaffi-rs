@@ -66,6 +66,7 @@ pub enum CType {
     Void,
     Ptr(Box<CType>),
     Array(Box<CType>, usize),
+    VLA(Box<CType>), // Variable Length Array - size determined at runtime
     Struct(String, Vec<CField>),
     Union(String, Vec<CField>),
     Function(Box<CType>, Vec<CType>),
@@ -94,7 +95,7 @@ impl CType {
             CType::SizeT | CType::SSizeT => align_of::<usize>(),
             CType::Void => 1,
             CType::Ptr(_) | CType::Function(_, _) => align_of::<*const ()>(),
-            CType::Array(inner, _) | CType::Typedef(_, inner) => inner.alignment(),
+            CType::Array(inner, _) | CType::VLA(inner) | CType::Typedef(_, inner) => inner.alignment(),
             CType::Struct(_, fields) | CType::Union(_, fields) => fields
                 .iter()
                 .map(|f| f.ctype.alignment())
@@ -125,6 +126,7 @@ impl CType {
             CType::Void => 0,
             CType::Ptr(_) | CType::Function(_, _) => size_of::<*const ()>(),
             CType::Array(inner, count) => inner.size() * count,
+            CType::VLA(_) => 0, // Size unknown at type definition time
             CType::Struct(_, fields) => {
                 if fields.is_empty() {
                     return 0;

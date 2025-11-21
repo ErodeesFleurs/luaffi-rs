@@ -75,6 +75,13 @@ fn read_ctype_value(lua: &Lua, ptr: *mut u8, ctype: &CType) -> LuaResult<LuaValu
             #[cfg(unix)]
             CType::TimeT => Ok(LuaValue::Integer(*(ptr as *const libc::time_t) as i64)),
             
+            CType::VLA(_) => {
+                // VLA should be converted to Array before reaching here
+                Err(LuaError::RuntimeError(
+                    "VLA must be instantiated before use".to_string()
+                ))
+            }
+            
             _ => {
                 // For complex types (Ptr, Array, Struct, Union, etc.), return as CData userdata
                 let cdata = CData::from_ptr(ctype.clone(), ptr, false);
@@ -206,7 +213,7 @@ impl LuaUserData for CData {
                 }
                 LuaValue::Integer(i) => {
                     match &this.ctype {
-                        CType::Array(elem_type, _) | CType::Ptr(elem_type) => {
+                        CType::Array(elem_type, _) | CType::Ptr(elem_type) | CType::VLA(elem_type) => {
                             let elem_size = elem_type.size();
                             let offset = i as usize * elem_size;
                             let elem_ptr = unsafe { this.ptr.add(offset) };
@@ -248,7 +255,7 @@ impl LuaUserData for CData {
                     LuaValue::Integer(i) => {
                         // Array/pointer element assignment
                         match &this.ctype {
-                            CType::Array(elem_type, _) | CType::Ptr(elem_type) => {
+                            CType::Array(elem_type, _) | CType::Ptr(elem_type) | CType::VLA(elem_type) => {
                                 let elem_size = elem_type.size();
                                 let offset = i as usize * elem_size;
                                 let elem_ptr = unsafe { this.ptr.add(offset) };
@@ -267,6 +274,10 @@ impl LuaUserData for CData {
 
         methods.add_meta_method(LuaMetaMethod::Len, |_lua, this, ()| match &this.ctype {
             CType::Array(_, count) => Ok(*count),
+            CType::VLA(_) => {
+                // VLA should have been converted to Array, this shouldn't happen
+                Err(LuaError::RuntimeError("VLA must be instantiated with size".to_string()))
+            }
             _ => Err(LuaError::RuntimeError("Not an array".to_string())),
         });
     }

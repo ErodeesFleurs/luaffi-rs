@@ -570,11 +570,11 @@ pub fn lookup_type(type_name: &str) -> LuaResult<CType> {
         let base_type = stripped_name[..open_bracket].trim();
         let inner = lookup_type(base_type)?;
 
-        let close_bracket = type_name.find(']').ok_or_else(|| {
+        let close_bracket = stripped_name.find(']').ok_or_else(|| {
             LuaError::RuntimeError(format!("Invalid array type (missing ']'): {}", type_name))
         })?;
 
-        let size_str = type_name[open_bracket + 1..close_bracket].trim();
+        let size_str = stripped_name[open_bracket + 1..close_bracket].trim();
         
         // Check for VLA syntax [?]
         if size_str == "?" {

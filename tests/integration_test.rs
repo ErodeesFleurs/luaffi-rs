@@ -698,3 +698,35 @@ fn test_const_char_ptr_array() {
     
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_char_ptr_array_vla() {
+    let lua = create_lua_with_ffi();
+    
+    // Test char*[?] without const (user's second issue)
+    let result = lua.load(r#"
+        return ffi.typeof("char*[?]")
+    "#).eval::<String>();
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_various_pointer_array_vla() {
+    let lua = create_lua_with_ffi();
+    
+    // Test various pointer array VLA types
+    let types = vec![
+        "char*[?]",
+        "int*[?]",
+        "void*[?]",
+        "float*[?]",
+        "double*[?]",
+    ];
+    
+    for type_name in types {
+        let result = lua.load(&format!("return ffi.typeof('{}')", type_name))
+            .eval::<String>();
+        assert!(result.is_ok(), "Failed for pointer array VLA: {}", type_name);
+    }
+}

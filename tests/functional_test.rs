@@ -449,4 +449,32 @@ mod ffi_functional_tests {
         assert_eq!(array.size(), std::mem::size_of::<*const ()>() * 10);
         assert_eq!(array.alignment(), ptr_type.alignment());
     }
+
+    #[test]
+    fn test_vla_of_pointers() {
+        // Test VLA of pointer types (e.g., char*[?])
+        let char_type = CType::Char;
+        let ptr_type = CType::Ptr(Box::new(char_type));
+        let vla = CType::VLA(Box::new(ptr_type.clone()));
+        
+        assert_eq!(vla.size(), 0); // VLA size unknown at type definition
+        assert_eq!(vla.alignment(), ptr_type.alignment());
+    }
+
+    #[test]
+    fn test_vla_various_pointer_types() {
+        // Test VLA with different pointer types
+        let types = vec![
+            CType::Ptr(Box::new(CType::Char)),
+            CType::Ptr(Box::new(CType::Int)),
+            CType::Ptr(Box::new(CType::Void)),
+            CType::Ptr(Box::new(CType::Float)),
+        ];
+        
+        for ptr_type in types {
+            let vla = CType::VLA(Box::new(ptr_type.clone()));
+            assert_eq!(vla.size(), 0);
+            assert_eq!(vla.alignment(), ptr_type.alignment());
+        }
+    }
 }

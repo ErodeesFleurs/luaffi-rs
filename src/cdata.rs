@@ -8,7 +8,6 @@ use crate::dylib::DynamicLibrary;
 // Helper function to read a value from memory as a Lua value
 #[inline]
 fn read_ctype_value(lua: &Lua, ptr: *mut u8, ctype: &CType) -> LuaResult<LuaValue> {
-    println!("Reading value of type {:?} from pointer {:p}", ctype, ptr);
     unsafe {
         match ctype {
             // Basic integer types

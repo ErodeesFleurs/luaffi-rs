@@ -6,7 +6,7 @@ mod parser;
 
 use mlua::prelude::*;
 
-const LUA_FFI_VERSION: &str = "0.1.0-rust";
+const LUA_FFI_VERSION: &str = "0.1.1-rust";
 
 /// Create the FFI module with all exported functions
 fn lua_module(lua: &Lua) -> LuaResult<LuaTable> {

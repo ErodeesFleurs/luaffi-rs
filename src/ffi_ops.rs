@@ -44,13 +44,282 @@ pub fn register_type(name: String, ctype: CType) {
 fn lookup_registered_type(name: &str) -> Option<CType> {
     TYPE_REGISTRY.get_or_init(|| RwLock::new(HashMap::new())).read().unwrap().get(name).cloned()
 }
-pub fn new_cdata(lua: &Lua, type_name: &str, _init: Option<LuaValue>) -> LuaResult<LuaAnyUserData> {
+pub fn new_cdata(lua: &Lua, type_name: &str, init: Option<LuaValue>) -> LuaResult<LuaAnyUserData> {
     let ctype = lookup_type(type_name)?;
     let size = ctype.size();
 
-    let cdata = CData::new(ctype, size);
+    let mut cdata = CData::new(ctype.clone(), size);
+
+    // Initialize the memory if init value is provided
+    if let Some(init_value) = init {
+        initialize_cdata(&mut cdata, init_value)?;
+    }
 
     lua.create_userdata(cdata)
+}
+
+// Macro for writing numeric values
+macro_rules! write_numeric {
+    ($ptr:expr, $ty:ty, $value:expr) => {{
+        let val = match $value {
+            LuaValue::Integer(i) => i as $ty,
+            LuaValue::Number(n) => n as $ty,
+            _ => return Err(LuaError::RuntimeError(
+                format!("Expected number for {} type", stringify!($ty))
+            )),
+        };
+        *($ptr as *mut $ty) = val;
+    }};
+}
+
+// Write a Lua value to memory at the given pointer
+fn write_value_to_ptr(ptr: *mut u8, ctype: &CType, value: LuaValue) -> LuaResult<()> {
+    unsafe {
+        match ctype {
+            // Basic integer types
+            CType::Int => write_numeric!(ptr, i32, value),
+            CType::UInt => write_numeric!(ptr, u32, value),
+            CType::Long => write_numeric!(ptr, isize, value),
+            CType::ULong => write_numeric!(ptr, usize, value),
+            CType::LongLong => write_numeric!(ptr, i64, value),
+            CType::ULongLong => write_numeric!(ptr, u64, value),
+            
+            // Character types
+            CType::Char => write_numeric!(ptr, i8, value),
+            CType::UChar => write_numeric!(ptr, u8, value),
+            
+            // Short types
+            CType::Short => write_numeric!(ptr, i16, value),
+            CType::UShort => write_numeric!(ptr, u16, value),
+            
+            // Fixed-width integer types
+            CType::Int8 => write_numeric!(ptr, i8, value),
+            CType::Int16 => write_numeric!(ptr, i16, value),
+            CType::Int32 => write_numeric!(ptr, i32, value),
+            CType::Int64 => write_numeric!(ptr, i64, value),
+            CType::UInt8 => write_numeric!(ptr, u8, value),
+            CType::UInt16 => write_numeric!(ptr, u16, value),
+            CType::UInt32 => write_numeric!(ptr, u32, value),
+            CType::UInt64 => write_numeric!(ptr, u64, value),
+            
+            // Size types
+            CType::SizeT => write_numeric!(ptr, usize, value),
+            CType::SSizeT => write_numeric!(ptr, isize, value),
+            
+            // Floating point types
+            CType::Float => write_numeric!(ptr, f32, value),
+            CType::Double => write_numeric!(ptr, f64, value),
+            
+            // Boolean type
+            CType::Bool => {
+                let val = match value {
+                    LuaValue::Boolean(b) => b,
+                    LuaValue::Integer(i) => i != 0,
+                    _ => return Err(LuaError::RuntimeError("Expected boolean or integer".to_string())),
+                };
+                *(ptr as *mut bool) = val;
+            }
+            
+            // POSIX types (Unix only)
+            #[cfg(unix)]
+            CType::InoT => write_numeric!(ptr, libc::ino_t, value),
+            #[cfg(unix)]
+            CType::DevT => write_numeric!(ptr, libc::dev_t, value),
+            #[cfg(unix)]
+            CType::GidT => write_numeric!(ptr, libc::gid_t, value),
+            #[cfg(unix)]
+            CType::ModeT => write_numeric!(ptr, libc::mode_t, value),
+            #[cfg(unix)]
+            CType::NlinkT => write_numeric!(ptr, libc::nlink_t, value),
+            #[cfg(unix)]
+            CType::UidT => write_numeric!(ptr, libc::uid_t, value),
+            #[cfg(unix)]
+            CType::OffT => write_numeric!(ptr, libc::off_t, value),
+            #[cfg(unix)]
+            CType::PidT => write_numeric!(ptr, libc::pid_t, value),
+            #[cfg(unix)]
+            CType::UsecondsT => write_numeric!(ptr, libc::useconds_t, value),
+            #[cfg(unix)]
+            CType::SusecondsT => write_numeric!(ptr, libc::suseconds_t, value),
+            #[cfg(unix)]
+            CType::BlksizeT => write_numeric!(ptr, libc::blksize_t, value),
+            #[cfg(unix)]
+            CType::BlkcntT => write_numeric!(ptr, libc::blkcnt_t, value),
+            #[cfg(unix)]
+            CType::TimeT => write_numeric!(ptr, libc::time_t, value),
+            
+            // Pointer type
+            CType::Ptr(inner_type) => {
+                match value {
+                    LuaValue::Integer(i) => *(ptr as *mut usize) = i as usize,
+                    LuaValue::UserData(ud) => {
+                        let cdata = ud.borrow::<CData>()?;
+                        *(ptr as *mut *mut u8) = cdata.as_ptr();
+                    }
+                    LuaValue::String(s) if matches!(**inner_type, CType::Char | CType::UChar) => {
+                        // String literal assignment to char* pointer
+                        // Note: This creates a pointer to the string's data, which may be temporary
+                        // In a real implementation, you'd need to manage string lifetime
+                        let bytes = s.as_bytes();
+                        *(ptr as *mut *const u8) = bytes.as_ptr();
+                    }
+                    LuaValue::Nil => {
+                        // NULL pointer assignment
+                        *(ptr as *mut usize) = 0;
+                    }
+                    _ => return Err(LuaError::RuntimeError(
+                        "Expected pointer value (integer, cdata, string, or nil)".to_string()
+                    )),
+                }
+            }
+            
+            // Array type - initialize from table
+            CType::Array(elem_type, count) => {
+                match value {
+                    LuaValue::Table(table) => {
+                        let elem_size = elem_type.size();
+                        for i in 0..*count {
+                            // Lua tables are 1-indexed
+                            if let Ok(elem_value) = table.get::<LuaValue>(i + 1) {
+                                let elem_ptr = ptr.add(i * elem_size);
+                                write_value_to_ptr(elem_ptr, elem_type, elem_value)?;
+                            }
+                        }
+                    }
+                    LuaValue::String(s) => {
+                        // String initialization for char arrays
+                        if matches!(**elem_type, CType::Char | CType::UChar) {
+                            let bytes = s.as_bytes();
+                            let copy_len = (*count).min(bytes.len());
+                            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, copy_len);
+                            // Null-terminate if there's space
+                            if copy_len < *count {
+                                *ptr.add(copy_len) = 0;
+                            }
+                        } else {
+                            return Err(LuaError::RuntimeError(
+                                "String initialization only supported for char arrays".to_string()
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(LuaError::RuntimeError(
+                            "Array initialization requires a table or string (for char arrays)".to_string()
+                        ));
+                    }
+                }
+            }
+            
+            // Struct type - initialize from table
+            CType::Struct(_, fields) => {
+                if let LuaValue::Table(table) = value {
+                    for field in fields {
+                        if let Ok(field_value) = table.get::<LuaValue>(field.name.as_str()) {
+                            let field_ptr = ptr.add(field.offset);
+                            write_value_to_ptr(field_ptr, &field.ctype, field_value)?;
+                        }
+                    }
+                } else {
+                    return Err(LuaError::RuntimeError(
+                        "Struct initialization requires a table".to_string()
+                    ));
+                }
+            }
+            
+            // Union type - initialize from table (typically first field or named field)
+            CType::Union(_, fields) => {
+                if let LuaValue::Table(table) = value {
+                    // Try to find a matching field name in the table
+                    for field in fields {
+                        if let Ok(field_value) = table.get::<LuaValue>(field.name.as_str()) {
+                            let field_ptr = ptr.add(field.offset);
+                            write_value_to_ptr(field_ptr, &field.ctype, field_value)?;
+                            // For unions, we only initialize one field
+                            break;
+                        }
+                    }
+                } else {
+                    return Err(LuaError::RuntimeError(
+                        "Union initialization requires a table".to_string()
+                    ));
+                }
+            }
+            
+            // Typedef - unwrap and write to the underlying type
+            CType::Typedef(_, inner_type) => {
+                write_value_to_ptr(ptr, inner_type, value)?;
+            }
+            
+            // Void type - cannot write
+            CType::Void => {
+                return Err(LuaError::RuntimeError(
+                    "Cannot assign value to void type".to_string()
+                ));
+            }
+            
+            // Function type - assign function pointer
+            CType::Function(_, _) => {
+                match value {
+                    LuaValue::Integer(i) => *(ptr as *mut usize) = i as usize,
+                    LuaValue::UserData(ud) => {
+                        let cdata = ud.borrow::<CData>()?;
+                        *(ptr as *mut *mut u8) = cdata.as_ptr();
+                    }
+                    _ => return Err(LuaError::RuntimeError(
+                        "Function pointer requires integer or cdata".to_string()
+                    )),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// Helper function to initialize CData with a value
+fn initialize_cdata(cdata: &mut CData, value: LuaValue) -> LuaResult<()> {
+    if cdata.ptr.is_null() || cdata.size == 0 {
+        return Ok(());
+    }
+
+    match &cdata.ctype {
+        CType::Struct(_, fields) | CType::Union(_, fields) => {
+            // Initialize struct/union fields from a table
+            if let LuaValue::Table(table) = value {
+                for field in fields {
+                    if let Ok(field_value) = table.get::<LuaValue>(field.name.as_str()) {
+                        let field_ptr = unsafe { cdata.ptr.add(field.offset) };
+                        write_value_to_ptr(field_ptr, &field.ctype, field_value)?;
+                    }
+                }
+            } else {
+                return Err(LuaError::RuntimeError(
+                    "Struct/union initialization requires a table".to_string()
+                ));
+            }
+        }
+        CType::Array(elem_type, count) => {
+            // Initialize array elements from a table
+            if let LuaValue::Table(table) = value {
+                let elem_size = elem_type.size();
+                for i in 0..*count {
+                    // Lua tables are 1-indexed
+                    if let Ok(elem_value) = table.get::<LuaValue>(i + 1) {
+                        let elem_ptr = unsafe { cdata.ptr.add(i * elem_size) };
+                        write_value_to_ptr(elem_ptr, elem_type, elem_value)?;
+                    }
+                }
+            } else {
+                return Err(LuaError::RuntimeError(
+                    "Array initialization requires a table".to_string()
+                ));
+            }
+        }
+        _ => {
+            // Initialize scalar types directly
+            write_value_to_ptr(cdata.ptr, &cdata.ctype, value)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn cast_cdata(lua: &Lua, type_name: &str, value: LuaValue) -> LuaResult<LuaAnyUserData> {

@@ -356,23 +356,37 @@ macro_rules! write_numeric {
 fn write_value_to_ptr(ptr: *mut u8, ctype: &CType, value: LuaValue) -> LuaResult<()> {
     unsafe {
         match ctype {
-            // Numeric types - use macro for consistency
+            // Basic integer types
             CType::Int => write_numeric!(ptr, i32, value),
             CType::UInt => write_numeric!(ptr, u32, value),
             CType::Long => write_numeric!(ptr, isize, value),
             CType::ULong => write_numeric!(ptr, usize, value),
+            CType::LongLong => write_numeric!(ptr, i64, value),
+            CType::ULongLong => write_numeric!(ptr, u64, value),
+            
+            // Character types
             CType::Char => write_numeric!(ptr, i8, value),
             CType::UChar => write_numeric!(ptr, u8, value),
+            
+            // Short types
             CType::Short => write_numeric!(ptr, i16, value),
             CType::UShort => write_numeric!(ptr, u16, value),
-            CType::LongLong | CType::Int64 => write_numeric!(ptr, i64, value),
-            CType::ULongLong | CType::UInt64 => write_numeric!(ptr, u64, value),
+            
+            // Fixed-width integer types
             CType::Int8 => write_numeric!(ptr, i8, value),
             CType::Int16 => write_numeric!(ptr, i16, value),
             CType::Int32 => write_numeric!(ptr, i32, value),
+            CType::Int64 => write_numeric!(ptr, i64, value),
             CType::UInt8 => write_numeric!(ptr, u8, value),
             CType::UInt16 => write_numeric!(ptr, u16, value),
             CType::UInt32 => write_numeric!(ptr, u32, value),
+            CType::UInt64 => write_numeric!(ptr, u64, value),
+            
+            // Size types
+            CType::SizeT => write_numeric!(ptr, usize, value),
+            CType::SSizeT => write_numeric!(ptr, isize, value),
+            
+            // Floating point types
             CType::Float => write_numeric!(ptr, f32, value),
             CType::Double => write_numeric!(ptr, f64, value),
             
@@ -385,6 +399,34 @@ fn write_value_to_ptr(ptr: *mut u8, ctype: &CType, value: LuaValue) -> LuaResult
                 };
                 *(ptr as *mut bool) = val;
             }
+            
+            // POSIX types (Unix only)
+            #[cfg(unix)]
+            CType::InoT => write_numeric!(ptr, libc::ino_t, value),
+            #[cfg(unix)]
+            CType::DevT => write_numeric!(ptr, libc::dev_t, value),
+            #[cfg(unix)]
+            CType::GidT => write_numeric!(ptr, libc::gid_t, value),
+            #[cfg(unix)]
+            CType::ModeT => write_numeric!(ptr, libc::mode_t, value),
+            #[cfg(unix)]
+            CType::NlinkT => write_numeric!(ptr, libc::nlink_t, value),
+            #[cfg(unix)]
+            CType::UidT => write_numeric!(ptr, libc::uid_t, value),
+            #[cfg(unix)]
+            CType::OffT => write_numeric!(ptr, libc::off_t, value),
+            #[cfg(unix)]
+            CType::PidT => write_numeric!(ptr, libc::pid_t, value),
+            #[cfg(unix)]
+            CType::UsecondsT => write_numeric!(ptr, libc::useconds_t, value),
+            #[cfg(unix)]
+            CType::SusecondsT => write_numeric!(ptr, libc::suseconds_t, value),
+            #[cfg(unix)]
+            CType::BlksizeT => write_numeric!(ptr, libc::blksize_t, value),
+            #[cfg(unix)]
+            CType::BlkcntT => write_numeric!(ptr, libc::blkcnt_t, value),
+            #[cfg(unix)]
+            CType::TimeT => write_numeric!(ptr, libc::time_t, value),
             
             // Pointer type
             CType::Ptr(_) => {

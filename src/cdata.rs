@@ -1,0 +1,354 @@
+use std::ptr;
+
+use mlua::prelude::*;
+
+use crate::ctype::CType;
+use crate::dylib::DynamicLibrary;
+
+// Helper function to read a value from memory as a Lua value
+#[inline]
+fn read_ctype_value(lua: &Lua, ptr: *mut u8, ctype: &CType) -> LuaResult<LuaValue> {
+    unsafe {
+        match ctype {
+            CType::Int => Ok(LuaValue::Integer(*(ptr as *const i32) as i64)),
+            CType::UInt => Ok(LuaValue::Integer(*(ptr as *const u32) as i64)),
+            CType::Long => Ok(LuaValue::Integer(*(ptr as *const isize) as i64)),
+            CType::ULong => Ok(LuaValue::Integer(*(ptr as *const usize) as i64)),
+            CType::Char => Ok(LuaValue::Integer(*(ptr as *const i8) as i64)),
+            CType::UChar => Ok(LuaValue::Integer(*(ptr as *const u8) as i64)),
+            CType::Short => Ok(LuaValue::Integer(*(ptr as *const i16) as i64)),
+            CType::UShort => Ok(LuaValue::Integer(*(ptr as *const u16) as i64)),
+            CType::Float => Ok(LuaValue::Number(*(ptr as *const f32) as f64)),
+            CType::Double => Ok(LuaValue::Number(*(ptr as *const f64))),
+            CType::Bool => Ok(LuaValue::Boolean(*(ptr as *const bool))),
+            _ => {
+                // For complex types, return as CData userdata
+                let cdata = CData::from_ptr(ctype.clone(), ptr, false);
+                lua.create_userdata(cdata).map(|ud| LuaValue::UserData(ud))
+            }
+        }
+    }
+}
+
+// Small buffer optimization - avoid heap allocation for small objects
+const SMALL_BUFFER_SIZE: usize = 64;
+
+#[derive(Clone)]
+pub struct CData {
+    pub ctype: CType,
+    pub ptr: *mut u8,
+    pub owned: bool,
+    pub size: usize,
+    // Small buffer optimization: store small data inline
+    small_buffer: Option<Box<[u8; SMALL_BUFFER_SIZE]>>,
+}
+
+impl CData {
+    #[inline]
+    pub fn new(ctype: CType, size: usize) -> Self {
+        // Use small buffer optimization for objects <= 64 bytes
+        if size <= SMALL_BUFFER_SIZE && size > 0 {
+            let mut buffer = Box::new([0u8; SMALL_BUFFER_SIZE]);
+            let ptr = buffer.as_mut_ptr();
+            Self {
+                ctype,
+                ptr,
+                owned: true,
+                size,
+                small_buffer: Some(buffer),
+            }
+        } else if size > 0 {
+            let layout = std::alloc::Layout::from_size_align(size, ctype.alignment())
+                .expect("Invalid layout");
+            // Use alloc instead of alloc_zeroed for better performance when initialization is not needed
+            let ptr = unsafe { std::alloc::alloc(layout) };
+            Self {
+                ctype,
+                ptr,
+                owned: true,
+                size,
+                small_buffer: None,
+            }
+        } else {
+            Self {
+                ctype,
+                ptr: ptr::null_mut(),
+                owned: false,
+                size: 0,
+                small_buffer: None,
+            }
+        }
+    }
+
+    pub fn new_null_ptr() -> Self {
+        Self {
+            ctype: CType::Ptr(Box::new(CType::Void)),
+            ptr: ptr::null_mut(),
+            owned: false,
+            size: std::mem::size_of::<*const ()>(),
+            small_buffer: None,
+        }
+    }
+
+    #[inline]
+    pub fn from_ptr(ctype: CType, ptr: *mut u8, owned: bool) -> Self {
+        let size = ctype.size();
+        Self {
+            ctype,
+            ptr,
+            owned,
+            size,
+            small_buffer: None,
+        }
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
+}
+
+impl Drop for CData {
+    fn drop(&mut self) {
+        // If we're using small_buffer, it will be dropped automatically
+        // Only deallocate if we're using heap-allocated memory
+        if self.owned && !self.ptr.is_null() && self.size > 0 && self.small_buffer.is_none() {
+            let layout = std::alloc::Layout::from_size_align(self.size, self.ctype.alignment())
+                .expect("Invalid layout");
+            unsafe {
+                std::alloc::dealloc(self.ptr, layout);
+            }
+        }
+    }
+}
+
+impl LuaUserData for CData {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(
+            LuaMetaMethod::Index,
+            |_lua, this, key: LuaValue| match key {
+                LuaValue::String(s) => {
+                    let field_name = s.to_str()?;
+                    match &this.ctype {
+                        CType::Struct(_, fields) | CType::Union(_, fields) => {
+                            for field in fields {
+                                if field_name == field.name.as_str() {
+                                    let field_ptr = unsafe { this.ptr.add(field.offset) };
+                                    return read_ctype_value(_lua, field_ptr, &field.ctype);
+                                }
+                            }
+                            Err(LuaError::RuntimeError(format!(
+                                "Unknown field: {}",
+                                field_name
+                            )))
+                        }
+                        _ => Err(LuaError::RuntimeError("Not a struct or union".to_string())),
+                    }
+                }
+                LuaValue::Integer(i) => {
+                    match &this.ctype {
+                        CType::Array(elem_type, _) | CType::Ptr(elem_type) => {
+                            let elem_size = elem_type.size();
+                            let offset = i as usize * elem_size;
+                            let elem_ptr = unsafe { this.ptr.add(offset) };
+                            read_ctype_value(_lua, elem_ptr, elem_type)
+                        }
+                        _ => Err(LuaError::RuntimeError(
+                            "Not an array or pointer".to_string(),
+                        )),
+                    }
+                }
+                _ => Err(LuaError::RuntimeError("Invalid index type".to_string())),
+            },
+        );
+
+        methods.add_meta_method_mut(
+            LuaMetaMethod::NewIndex,
+            |_lua, this, (key, value): (LuaValue, LuaValue)| {
+                match key {
+                    LuaValue::String(s) => {
+                        // Field assignment for structs/unions
+                        let field_name = s.to_str()?;
+                        match &this.ctype {
+                            CType::Struct(_, fields) | CType::Union(_, fields) => {
+                                for field in fields {
+                                    if field_name == field.name.as_str() {
+                                        let field_ptr = unsafe { this.ptr.add(field.offset) };
+                                        write_value_to_ptr(field_ptr, &field.ctype, value)?;
+                                        return Ok(());
+                                    }
+                                }
+                                Err(LuaError::RuntimeError(format!(
+                                    "Unknown field: {}",
+                                    field_name
+                                )))
+                            }
+                            _ => Err(LuaError::RuntimeError("Not a struct or union".to_string())),
+                        }
+                    }
+                    LuaValue::Integer(i) => {
+                        // Array/pointer element assignment
+                        match &this.ctype {
+                            CType::Array(elem_type, _) | CType::Ptr(elem_type) => {
+                                let elem_size = elem_type.size();
+                                let offset = i as usize * elem_size;
+                                let elem_ptr = unsafe { this.ptr.add(offset) };
+                                write_value_to_ptr(elem_ptr, elem_type, value)?;
+                                Ok(())
+                            }
+                            _ => Err(LuaError::RuntimeError(
+                                "Not an array or pointer".to_string(),
+                            )),
+                        }
+                    }
+                    _ => Err(LuaError::RuntimeError("Invalid index type".to_string())),
+                }
+            },
+        );
+
+        methods.add_meta_method(LuaMetaMethod::Len, |_lua, this, ()| match &this.ctype {
+            CType::Array(_, count) => Ok(*count),
+            _ => Err(LuaError::RuntimeError("Not an array".to_string())),
+        });
+    }
+}
+
+pub struct CFunction {
+    _ptr: *mut libc::c_void,
+    pub name: String,
+}
+
+impl LuaUserData for CFunction {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(LuaMetaMethod::Call, |_lua, this, _args: LuaMultiValue| -> LuaResult<LuaValue> {
+            Err(LuaError::RuntimeError(format!(
+                "C function call not yet fully implemented for '{}'",
+                this.name
+            )))
+        });
+    }
+}
+
+pub struct CLib {
+    handle: Option<DynamicLibrary>,
+    _name: String,
+}
+
+impl CLib {
+    pub fn load(name: &str) -> Result<Self, String> {
+        let lib = DynamicLibrary::load(name)?;
+        Ok(Self {
+            handle: Some(lib),
+            _name: name.to_string(),
+        })
+    }
+
+    pub fn load_default() -> Result<Self, String> {
+        let lib = DynamicLibrary::load_default()?;
+        Ok(Self {
+            handle: Some(lib),
+            _name: "C".to_string(),
+        })
+    }
+
+    pub fn get_symbol(&self, name: &str) -> Option<*mut libc::c_void> {
+        self.handle.as_ref()?.get_symbol(name)
+    }
+}
+
+impl LuaUserData for CLib {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(LuaMetaMethod::Index, |lua, this, name: String| {
+            if let Some(sym) = this.get_symbol(&name) {
+                // Return a callable function wrapper
+                let cfunc = CFunction {
+                    _ptr: sym,
+                    name: name.clone(),
+                };
+                lua.create_userdata(cfunc)
+                    .map(|ud| LuaValue::UserData(ud))
+            } else {
+                Err(LuaError::RuntimeError(format!(
+                    "Symbol not found: {}",
+                    name
+                )))
+            }
+        });
+    }
+}
+
+// Improved macro with better error messages
+macro_rules! write_numeric {
+    ($ptr:expr, $ty:ty, $value:expr) => {{
+        let val = match $value {
+            LuaValue::Integer(i) => i as $ty,
+            LuaValue::Number(n) => n as $ty,
+            _ => return Err(LuaError::RuntimeError(
+                format!("Expected number for {} type", stringify!($ty))
+            )),
+        };
+        *($ptr as *mut $ty) = val;
+    }};
+}
+
+// Improved write function with better type safety and error handling
+#[inline]
+fn write_value_to_ptr(ptr: *mut u8, ctype: &CType, value: LuaValue) -> LuaResult<()> {
+    unsafe {
+        match ctype {
+            // Numeric types - use macro for consistency
+            CType::Int => write_numeric!(ptr, i32, value),
+            CType::UInt => write_numeric!(ptr, u32, value),
+            CType::Long => write_numeric!(ptr, isize, value),
+            CType::ULong => write_numeric!(ptr, usize, value),
+            CType::Char => write_numeric!(ptr, i8, value),
+            CType::UChar => write_numeric!(ptr, u8, value),
+            CType::Short => write_numeric!(ptr, i16, value),
+            CType::UShort => write_numeric!(ptr, u16, value),
+            CType::LongLong | CType::Int64 => write_numeric!(ptr, i64, value),
+            CType::ULongLong | CType::UInt64 => write_numeric!(ptr, u64, value),
+            CType::Int8 => write_numeric!(ptr, i8, value),
+            CType::Int16 => write_numeric!(ptr, i16, value),
+            CType::Int32 => write_numeric!(ptr, i32, value),
+            CType::UInt8 => write_numeric!(ptr, u8, value),
+            CType::UInt16 => write_numeric!(ptr, u16, value),
+            CType::UInt32 => write_numeric!(ptr, u32, value),
+            CType::Float => write_numeric!(ptr, f32, value),
+            CType::Double => write_numeric!(ptr, f64, value),
+            
+            // Boolean type
+            CType::Bool => {
+                let val = match value {
+                    LuaValue::Boolean(b) => b,
+                    LuaValue::Integer(i) => i != 0,
+                    _ => return Err(LuaError::RuntimeError("Expected boolean or integer".to_string())),
+                };
+                *(ptr as *mut bool) = val;
+            }
+            
+            // Pointer type
+            CType::Ptr(_) => {
+                match value {
+                    LuaValue::Integer(i) => *(ptr as *mut usize) = i as usize,
+                    LuaValue::UserData(ud) => {
+                        let cdata = ud.borrow::<CData>()?;
+                        *(ptr as *mut *mut u8) = cdata.as_ptr();
+                    }
+                    _ => return Err(LuaError::RuntimeError(
+                        "Expected pointer value (integer or cdata)".to_string()
+                    )),
+                }
+            }
+            
+            _ => return Err(LuaError::RuntimeError(
+                format!("Cannot assign value to type: {:?}", ctype)
+            )),
+        }
+    }
+    Ok(())
+}

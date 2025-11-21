@@ -1,0 +1,29 @@
+[package]
+name = "luaffi"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "luaffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mlua = { version = "0.11.4", features = ["lua53", "vendored"] }
+libc = "0.2.177"
+nom = "8.0.0"
+phf = { version = "0.13.1", features = ["macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_LibraryLoader", "Win32_Foundation"] }
+
+[dev-dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1

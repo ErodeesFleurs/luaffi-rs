@@ -8,21 +8,76 @@ use crate::dylib::DynamicLibrary;
 // Helper function to read a value from memory as a Lua value
 #[inline]
 fn read_ctype_value(lua: &Lua, ptr: *mut u8, ctype: &CType) -> LuaResult<LuaValue> {
+    println!("Reading value of type {:?} from pointer {:p}", ctype, ptr);
     unsafe {
         match ctype {
+            // Basic integer types
             CType::Int => Ok(LuaValue::Integer(*(ptr as *const i32) as i64)),
             CType::UInt => Ok(LuaValue::Integer(*(ptr as *const u32) as i64)),
             CType::Long => Ok(LuaValue::Integer(*(ptr as *const isize) as i64)),
             CType::ULong => Ok(LuaValue::Integer(*(ptr as *const usize) as i64)),
+            CType::LongLong => Ok(LuaValue::Integer(*(ptr as *const i64))),
+            CType::ULongLong => Ok(LuaValue::Integer(*(ptr as *const u64) as i64)),
+            
+            // Character types
             CType::Char => Ok(LuaValue::Integer(*(ptr as *const i8) as i64)),
             CType::UChar => Ok(LuaValue::Integer(*(ptr as *const u8) as i64)),
+            
+            // Short types
             CType::Short => Ok(LuaValue::Integer(*(ptr as *const i16) as i64)),
             CType::UShort => Ok(LuaValue::Integer(*(ptr as *const u16) as i64)),
+            
+            // Fixed-width integer types
+            CType::Int8 => Ok(LuaValue::Integer(*(ptr as *const i8) as i64)),
+            CType::Int16 => Ok(LuaValue::Integer(*(ptr as *const i16) as i64)),
+            CType::Int32 => Ok(LuaValue::Integer(*(ptr as *const i32) as i64)),
+            CType::Int64 => Ok(LuaValue::Integer(*(ptr as *const i64))),
+            CType::UInt8 => Ok(LuaValue::Integer(*(ptr as *const u8) as i64)),
+            CType::UInt16 => Ok(LuaValue::Integer(*(ptr as *const u16) as i64)),
+            CType::UInt32 => Ok(LuaValue::Integer(*(ptr as *const u32) as i64)),
+            CType::UInt64 => Ok(LuaValue::Integer(*(ptr as *const u64) as i64)),
+            
+            // Size types
+            CType::SizeT => Ok(LuaValue::Integer(*(ptr as *const usize) as i64)),
+            CType::SSizeT => Ok(LuaValue::Integer(*(ptr as *const isize) as i64)),
+            
+            // Floating point types
             CType::Float => Ok(LuaValue::Number(*(ptr as *const f32) as f64)),
             CType::Double => Ok(LuaValue::Number(*(ptr as *const f64))),
+            
+            // Boolean type
             CType::Bool => Ok(LuaValue::Boolean(*(ptr as *const bool))),
+            
+            // POSIX types (Unix only)
+            #[cfg(unix)]
+            CType::InoT => Ok(LuaValue::Integer(*(ptr as *const libc::ino_t) as i64)),
+            #[cfg(unix)]
+            CType::DevT => Ok(LuaValue::Integer(*(ptr as *const libc::dev_t) as i64)),
+            #[cfg(unix)]
+            CType::GidT => Ok(LuaValue::Integer(*(ptr as *const libc::gid_t) as i64)),
+            #[cfg(unix)]
+            CType::ModeT => Ok(LuaValue::Integer(*(ptr as *const libc::mode_t) as i64)),
+            #[cfg(unix)]
+            CType::NlinkT => Ok(LuaValue::Integer(*(ptr as *const libc::nlink_t) as i64)),
+            #[cfg(unix)]
+            CType::UidT => Ok(LuaValue::Integer(*(ptr as *const libc::uid_t) as i64)),
+            #[cfg(unix)]
+            CType::OffT => Ok(LuaValue::Integer(*(ptr as *const libc::off_t) as i64)),
+            #[cfg(unix)]
+            CType::PidT => Ok(LuaValue::Integer(*(ptr as *const libc::pid_t) as i64)),
+            #[cfg(unix)]
+            CType::UsecondsT => Ok(LuaValue::Integer(*(ptr as *const libc::useconds_t) as i64)),
+            #[cfg(unix)]
+            CType::SusecondsT => Ok(LuaValue::Integer(*(ptr as *const libc::suseconds_t) as i64)),
+            #[cfg(unix)]
+            CType::BlksizeT => Ok(LuaValue::Integer(*(ptr as *const libc::blksize_t) as i64)),
+            #[cfg(unix)]
+            CType::BlkcntT => Ok(LuaValue::Integer(*(ptr as *const libc::blkcnt_t) as i64)),
+            #[cfg(unix)]
+            CType::TimeT => Ok(LuaValue::Integer(*(ptr as *const libc::time_t) as i64)),
+            
             _ => {
-                // For complex types, return as CData userdata
+                // For complex types (Ptr, Array, Struct, Union, etc.), return as CData userdata
                 let cdata = CData::from_ptr(ctype.clone(), ptr, false);
                 lua.create_userdata(cdata).map(|ud| LuaValue::UserData(ud))
             }

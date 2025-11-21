@@ -654,3 +654,47 @@ fn test_vla_different_types() {
         assert!(result.is_ok(), "Failed for VLA type: {}", type_name);
     }
 }
+
+#[test]
+fn test_vla_with_const_qualifier() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA with const qualifier
+    let result = lua.load(r#"
+        return ffi.typeof("const char*[?]")
+    "#).eval::<String>();
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_vla_with_various_qualifiers() {
+    let lua = create_lua_with_ffi();
+    
+    // Test VLA with different type qualifiers
+    let types = vec![
+        "const char*[?]",
+        "const int[?]",
+        "volatile int[?]",
+        "const void*[?]",
+    ];
+    
+    for type_name in types {
+        let result = lua.load(&format!("return ffi.typeof('{}')", type_name))
+            .eval::<String>();
+        assert!(result.is_ok(), "Failed for VLA type with qualifier: {}", type_name);
+    }
+}
+
+#[test]
+fn test_const_char_ptr_array() {
+    let lua = create_lua_with_ffi();
+    
+    // Specifically test the user's example: const char*[?]
+    let result = lua.load(r#"
+        local type_str = ffi.typeof("const char*[?]")
+        return type_str ~= nil
+    "#).eval::<bool>();
+    
+    assert!(result.is_ok());
+}

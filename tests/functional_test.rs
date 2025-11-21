@@ -427,4 +427,26 @@ mod ffi_functional_tests {
             assert_eq!(vla.alignment(), elem_type.alignment());
         }
     }
+
+    #[test]
+    fn test_vla_with_const_pointer() {
+        // Test VLA of const char* (common use case for string arrays)
+        let char_type = CType::Char;
+        let ptr_type = CType::Ptr(Box::new(char_type));
+        let vla = CType::VLA(Box::new(ptr_type.clone()));
+        
+        assert_eq!(vla.size(), 0);
+        assert_eq!(vla.alignment(), ptr_type.alignment());
+    }
+
+    #[test]
+    fn test_array_of_const_pointers() {
+        // Test creating an array of const char* pointers
+        let char_type = CType::Char;
+        let ptr_type = CType::Ptr(Box::new(char_type));
+        let array = CType::Array(Box::new(ptr_type.clone()), 10);
+        
+        assert_eq!(array.size(), std::mem::size_of::<*const ()>() * 10);
+        assert_eq!(array.alignment(), ptr_type.alignment());
+    }
 }

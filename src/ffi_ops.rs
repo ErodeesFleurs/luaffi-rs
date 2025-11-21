@@ -543,21 +543,31 @@ fn lookup_basic_type(type_name: &str) -> Option<CType> {
 }
 
 pub fn lookup_type(type_name: &str) -> LuaResult<CType> {
+    // Strip type qualifiers (const, volatile, restrict, etc.)
+    let stripped_name = type_name
+        .trim()
+        .trim_start_matches("const")
+        .trim()
+        .trim_start_matches("volatile")
+        .trim()
+        .trim_start_matches("restrict")
+        .trim();
+    
     // Check basic types first (fastest path)
-    if let Some(ctype) = lookup_basic_type(type_name) {
+    if let Some(ctype) = lookup_basic_type(stripped_name) {
         return Ok(ctype);
     }
 
     // Check for pointer type
-    if type_name.ends_with('*') {
-        let base_type = type_name.trim_end_matches('*').trim();
+    if stripped_name.ends_with('*') {
+        let base_type = stripped_name.trim_end_matches('*').trim();
         let inner = lookup_type(base_type)?;
         return Ok(CType::Ptr(Box::new(inner)));
     }
 
     // Check for array type
-    if let Some(open_bracket) = type_name.find('[') {
-        let base_type = type_name[..open_bracket].trim();
+    if let Some(open_bracket) = stripped_name.find('[') {
+        let base_type = stripped_name[..open_bracket].trim();
         let inner = lookup_type(base_type)?;
 
         let close_bracket = type_name.find(']').ok_or_else(|| {
@@ -583,6 +593,6 @@ pub fn lookup_type(type_name: &str) -> LuaResult<CType> {
     }
 
     // Look up in the type registry for structs/typedefs
-    lookup_registered_type(type_name)
+    lookup_registered_type(stripped_name)
         .ok_or_else(|| LuaError::RuntimeError(format!("Unknown type: {}", type_name)))
 }

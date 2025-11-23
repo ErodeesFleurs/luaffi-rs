@@ -4,14 +4,12 @@ use std::ffi::CString;
 use std::ptr;
 
 #[cfg(unix)]
-use libc::{dlclose, dlerror, dlopen, dlsym, RTLD_LAZY};
+use libc::{RTLD_LAZY, dlclose, dlerror, dlopen, dlsym};
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::FreeLibrary;
 #[cfg(windows)]
-use windows_sys::Win32::System::LibraryLoader::{
-    GetProcAddress, LoadLibraryA, GetModuleHandleA,
-};
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA};
 
 pub struct DynamicLibrary {
     #[cfg(unix)]
@@ -48,7 +46,7 @@ impl DynamicLibrary {
         #[cfg(windows)]
         {
             let c_name = CString::new(name).map_err(|e| e.to_string())?;
-            let handle = unsafe { LoadLibraryA(c_name.as_ptr() as *const u8) };
+            let handle = unsafe { LoadLibraryA(c_name.as_ptr() as *const u8) } as isize;
 
             if handle == 0 {
                 return Err(format!("Failed to load library: {}", name));
@@ -76,11 +74,11 @@ impl DynamicLibrary {
         {
             // On Windows, get a handle to the msvcrt.dll (C runtime)
             let c_name = CString::new("msvcrt.dll").unwrap();
-            let handle = unsafe { LoadLibraryA(c_name.as_ptr() as *const u8) };
+            let handle = unsafe { LoadLibraryA(c_name.as_ptr() as *const u8) } as isize;
 
             if handle == 0 {
                 // Try to get the main module handle as fallback
-                let main_handle = unsafe { GetModuleHandleA(ptr::null()) };
+                let main_handle = unsafe { GetModuleHandleA(ptr::null()) } as isize;
                 if main_handle == 0 {
                     return Err("Failed to load default C library".to_string());
                 }
@@ -89,7 +87,7 @@ impl DynamicLibrary {
                 });
             }
 
-            Ok(Self { handle })
+            Ok(Self { handle: handle })
         }
     }
 
@@ -100,17 +98,13 @@ impl DynamicLibrary {
             let c_name = CString::new(name).ok()?;
             let sym = unsafe { dlsym(self.handle, c_name.as_ptr()) };
 
-            if sym.is_null() {
-                None
-            } else {
-                Some(sym)
-            }
+            if sym.is_null() { None } else { Some(sym) }
         }
 
         #[cfg(windows)]
         {
             let c_name = CString::new(name).ok()?;
-            let sym = unsafe { GetProcAddress(self.handle, c_name.as_ptr() as *const u8) };
+            let sym = unsafe { GetProcAddress(self.handle as *mut libc::c_void, c_name.as_ptr() as *const u8) };
 
             if sym.is_none() {
                 None
@@ -132,7 +126,7 @@ impl Drop for DynamicLibrary {
         unsafe {
             // Note: We don't free the main module handle
             if self.handle != 0 {
-                FreeLibrary(self.handle);
+                FreeLibrary(self.handle as *mut libc::c_void);
             }
         }
     }

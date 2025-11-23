@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod ffi_functional_tests {
-    use luaffi::ctype::{CType, CField};
+    use luaffi::ctype::{CField, CType};
 
     #[test]
     fn test_create_basic_types() {
@@ -116,13 +116,11 @@ mod ffi_functional_tests {
 
     #[test]
     fn test_nested_struct_types() {
-        let inner_fields = vec![
-            CField {
-                name: "x".to_string(),
-                ctype: CType::Int,
-                offset: 0,
-            },
-        ];
+        let inner_fields = vec![CField {
+            name: "x".to_string(),
+            ctype: CType::Int,
+            offset: 0,
+        }];
         let inner = CType::Struct("Inner".to_string(), inner_fields);
 
         let outer_fields = vec![
@@ -179,7 +177,9 @@ mod ffi_functional_tests {
         ];
 
         let string_view = CType::Struct("StringView".to_string(), fields);
-        assert!(string_view.size() >= std::mem::size_of::<*const ()>() + std::mem::size_of::<i32>());
+        assert!(
+            string_view.size() >= std::mem::size_of::<*const ()>() + std::mem::size_of::<i32>()
+        );
     }
 
     #[test]
@@ -198,13 +198,11 @@ mod ffi_functional_tests {
 
     #[test]
     fn test_typedef_struct() {
-        let fields = vec![
-            CField {
-                name: "x".to_string(),
-                ctype: CType::Int,
-                offset: 0,
-            },
-        ];
+        let fields = vec![CField {
+            name: "x".to_string(),
+            ctype: CType::Int,
+            offset: 0,
+        }];
         let point = CType::Struct("Point".to_string(), fields);
         let point_t = CType::Typedef("point_t".to_string(), Box::new(point.clone()));
         assert_eq!(point_t.size(), point.size());
@@ -226,32 +224,27 @@ mod ffi_functional_tests {
         ];
         let point = CType::Struct("Point".to_string(), fields);
         let points_array = CType::Array(Box::new(point.clone()), 10);
-        
+
         assert_eq!(points_array.size(), point.size() * 10);
     }
 
     #[test]
     fn test_pointer_to_struct() {
-        let fields = vec![
-            CField {
-                name: "value".to_string(),
-                ctype: CType::Int,
-                offset: 0,
-            },
-        ];
+        let fields = vec![CField {
+            name: "value".to_string(),
+            ctype: CType::Int,
+            offset: 0,
+        }];
         let node = CType::Struct("Node".to_string(), fields);
         let node_ptr = CType::Ptr(Box::new(node));
-        
+
         assert_eq!(node_ptr.size(), std::mem::size_of::<*const ()>());
     }
 
     #[test]
     fn test_function_type() {
-        let callback = CType::Function(
-            Box::new(CType::Void),
-            vec![CType::Int, CType::Int],
-        );
-        
+        let callback = CType::Function(Box::new(CType::Void), vec![CType::Int, CType::Int]);
+
         // Function types are stored as pointers
         assert_eq!(callback.size(), std::mem::size_of::<*const ()>());
     }
@@ -261,7 +254,7 @@ mod ffi_functional_tests {
         // Create a complex structure with multiple levels of nesting
         let int_array = CType::Array(Box::new(CType::Int), 5);
         let char_ptr = CType::Ptr(Box::new(CType::Char));
-        
+
         let inner_fields = vec![
             CField {
                 name: "id".to_string(),
@@ -275,7 +268,7 @@ mod ffi_functional_tests {
             },
         ];
         let inner = CType::Struct("Inner".to_string(), inner_fields);
-        
+
         let outer_fields = vec![
             CField {
                 name: "inner".to_string(),
@@ -294,7 +287,7 @@ mod ffi_functional_tests {
             },
         ];
         let outer = CType::Struct("Outer".to_string(), outer_fields);
-        
+
         assert!(outer.size() > 0);
         assert!(outer.alignment() > 0);
     }
@@ -332,7 +325,7 @@ mod ffi_functional_tests {
         ];
 
         let _s = CType::Struct("Aligned".to_string(), fields.clone());
-        
+
         // Verify offsets are reasonable
         assert_eq!(fields[0].offset, 0);
         assert!(fields[1].offset >= 4);
@@ -354,14 +347,27 @@ mod ffi_functional_tests {
     #[test]
     fn test_all_basic_types_have_size() {
         let types = vec![
-            CType::Bool, CType::Char, CType::UChar,
-            CType::Short, CType::UShort,
-            CType::Int, CType::UInt,
-            CType::Long, CType::ULong,
-            CType::Float, CType::Double,
-            CType::Int8, CType::Int16, CType::Int32, CType::Int64,
-            CType::UInt8, CType::UInt16, CType::UInt32, CType::UInt64,
-            CType::SizeT, CType::SSizeT,
+            CType::Bool,
+            CType::Char,
+            CType::UChar,
+            CType::Short,
+            CType::UShort,
+            CType::Int,
+            CType::UInt,
+            CType::Long,
+            CType::ULong,
+            CType::Float,
+            CType::Double,
+            CType::Int8,
+            CType::Int16,
+            CType::Int32,
+            CType::Int64,
+            CType::UInt8,
+            CType::UInt16,
+            CType::UInt32,
+            CType::UInt64,
+            CType::SizeT,
+            CType::SSizeT,
         ];
 
         for t in types {
@@ -372,21 +378,29 @@ mod ffi_functional_tests {
 
     #[test]
     fn test_posix_types() {
-        let posix_types = vec![
-            CType::TimeT,
-            CType::InoT,
-            CType::DevT,
-            CType::GidT,
-            CType::UidT,
-            CType::PidT,
-            CType::OffT,
-            CType::ModeT,
-            CType::NlinkT,
-        ];
+        #[cfg(windows)]
+        {
+            // POSIX types are not defined on Windows
+            return;
+        }
+        #[cfg(not(windows))]
+        {
+            let posix_types = vec![
+                CType::TimeT,
+                CType::InoT,
+                CType::DevT,
+                CType::GidT,
+                CType::UidT,
+                CType::PidT,
+                CType::OffT,
+                CType::ModeT,
+                CType::NlinkT,
+            ];
 
-        for t in posix_types {
-            assert!(t.size() > 0);
-            assert!(t.alignment() > 0);
+            for t in posix_types {
+                assert!(t.size() > 0);
+                assert!(t.alignment() > 0);
+            }
         }
     }
 
@@ -394,10 +408,10 @@ mod ffi_functional_tests {
     fn test_vla_type_creation() {
         // Test VLA type creation
         let vla = CType::VLA(Box::new(CType::Int));
-        
+
         // VLA size should be 0 at definition time (size unknown)
         assert_eq!(vla.size(), 0);
-        
+
         // VLA alignment should match element type
         assert_eq!(vla.alignment(), CType::Int.alignment());
     }
@@ -406,7 +420,7 @@ mod ffi_functional_tests {
     fn test_vla_with_pointer() {
         let ptr_type = CType::Ptr(Box::new(CType::Void));
         let vla = CType::VLA(Box::new(ptr_type));
-        
+
         assert_eq!(vla.size(), 0);
         assert_eq!(vla.alignment(), std::mem::align_of::<*const ()>());
     }
@@ -420,7 +434,7 @@ mod ffi_functional_tests {
             CType::Double,
             CType::Ptr(Box::new(CType::Void)),
         ];
-        
+
         for elem_type in types {
             let vla = CType::VLA(Box::new(elem_type.clone()));
             assert_eq!(vla.size(), 0);
@@ -434,7 +448,7 @@ mod ffi_functional_tests {
         let char_type = CType::Char;
         let ptr_type = CType::Ptr(Box::new(char_type));
         let vla = CType::VLA(Box::new(ptr_type.clone()));
-        
+
         assert_eq!(vla.size(), 0);
         assert_eq!(vla.alignment(), ptr_type.alignment());
     }
@@ -445,7 +459,7 @@ mod ffi_functional_tests {
         let char_type = CType::Char;
         let ptr_type = CType::Ptr(Box::new(char_type));
         let array = CType::Array(Box::new(ptr_type.clone()), 10);
-        
+
         assert_eq!(array.size(), std::mem::size_of::<*const ()>() * 10);
         assert_eq!(array.alignment(), ptr_type.alignment());
     }
@@ -456,7 +470,7 @@ mod ffi_functional_tests {
         let char_type = CType::Char;
         let ptr_type = CType::Ptr(Box::new(char_type));
         let vla = CType::VLA(Box::new(ptr_type.clone()));
-        
+
         assert_eq!(vla.size(), 0); // VLA size unknown at type definition
         assert_eq!(vla.alignment(), ptr_type.alignment());
     }
@@ -470,7 +484,7 @@ mod ffi_functional_tests {
             CType::Ptr(Box::new(CType::Void)),
             CType::Ptr(Box::new(CType::Float)),
         ];
-        
+
         for ptr_type in types {
             let vla = CType::VLA(Box::new(ptr_type.clone()));
             assert_eq!(vla.size(), 0);

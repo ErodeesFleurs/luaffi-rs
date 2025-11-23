@@ -148,7 +148,7 @@ fn ffi_fill(_lua: &Lua, (cdata, len, value): (LuaAnyUserData, usize, Option<u8>)
     ffi_ops::fill_memory(cdata, len, value.unwrap_or(0))
 }
 
-fn ffi_errno(_lua: &Lua, new_errno: Option<i32>) -> LuaResult<i32> {
+fn ffi_errno(_lua: &Lua, _new_errno: Option<i32>) -> LuaResult<i32> {
     #[cfg(unix)]
     {
         unsafe {
@@ -156,7 +156,7 @@ fn ffi_errno(_lua: &Lua, new_errno: Option<i32>) -> LuaResult<i32> {
             {
                 let errno_ptr = libc::__errno_location();
                 let old_errno = *errno_ptr;
-                if let Some(new) = new_errno {
+                if let Some(new) = _new_errno {
                     *errno_ptr = new;
                 }
                 Ok(old_errno)
@@ -165,7 +165,7 @@ fn ffi_errno(_lua: &Lua, new_errno: Option<i32>) -> LuaResult<i32> {
             {
                 // For BSD/macOS: errno is accessed differently
                 let old_errno = *libc::__error();
-                if let Some(new) = new_errno {
+                if let Some(new) = _new_errno {
                     *libc::__error() = new;
                 }
                 Ok(old_errno)
